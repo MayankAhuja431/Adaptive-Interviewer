@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+websockets
+networkx
+pydantic
+langchain
+langchain-groq
+langchain-google-genai
+langchain-openai
+python-dotenv
+torch
+
+

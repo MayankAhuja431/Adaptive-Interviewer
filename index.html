@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adaptive AI Technical Interviewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+    }
+  </script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.5); }
+  </style>
+</head>
+<body class="transition-colors duration-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Knowledge graph concepts data for Revision Mode & Results
+    const REVISION_TOPICS = [
+      {
+        node_id: "process_vs_thread",
+        name: "Process vs Thread Architecture",
+        topic: "Operating Systems",
+        difficulty_b: -1.2,
+        difficulty_label: "Novice (-1.2)",
+        discrimination_a: 1.2,
+        prerequisites: [],
+        key_concepts: [
+          "Process has an independent virtual address space, file descriptor table, and isolation boundary.",
+          "Threads share process address space (heap, text, global data, open files) but have their own program counter, stack, and registers.",
+          "Context switching overhead is substantially higher for processes (TLB flush, page directory change) than threads."
+        ]
+      },
+      {
+        node_id: "cpu_scheduling_basics",
+        name: "CPU Scheduling Fundamentals",
+        topic: "Operating Systems",
+        difficulty_b: -0.8,
+        difficulty_label: "Easy (-0.8)",
+        discrimination_a: 1.1,
+        prerequisites: ["Process vs Thread"],
+        key_concepts: [
+          "Preemptive vs Non-preemptive scheduling (timer interrupt vs voluntary yield/blocking).",
+          "FCFS causes convoy effect when CPU-bound tasks block short I/O tasks.",
+          "Round-Robin time quantum: too large degenerates to FCFS; too small causes excessive context switch overhead.",
+          "Metrics: Turnaround Time (Completion - Arrival), Waiting Time, Response Time."
+        ]
+      },
+      {
+        node_id: "race_conditions",
+        name: "Race Conditions & Critical Sections",
+        topic: "Operating Systems",
+        difficulty_b: 0.0,
+        difficulty_label: "Intermediate (0.0)",
+        discrimination_a: 1.4,
+        prerequisites: ["Process vs Thread"],
+        key_concepts: [
+          "Race Condition: Concurrent uncoordinated read/write to shared memory where outcome depends on execution order.",
+          "Three critical section requirements: Mutual Exclusion (one at a time), Progress (no deadlock when entering), Bounded Waiting (no starvation).",
+          "Hardware primitives: Atomic Test-and-Set and Compare-and-Swap (CAS) prevent race conditions at CPU instruction level."
+        ]
+      },
+      {
+        node_id: "synchronization_primitives",
+        name: "Mutexes and Semaphores",
+        topic: "Operating Systems",
+        difficulty_b: 0.5,
+        difficulty_label: "Proficient (+0.5)",
+        discrimination_a: 1.5,
+        prerequisites: ["Race Conditions"],
+        key_concepts: [
+          "Mutex: Strictly owned locking mechanism (only acquiring thread can unlock).",
+          "Semaphores: Signaling mechanism. Counting semaphore maintains integer resource count; Binary semaphore behaves like a signal flag.",
+          "Atomic wait()/P() decrements; signal()/V() increments.",
+          "Priority Inversion: Low-priority task holds resource needed by high-priority task while medium task runs. Solution: Priority Inheritance Protocol."
+        ]
+      },
+      {
+        node_id: "deadlock_characterization",
+        name: "Deadlock Characterization & Coffman Conditions",
+        topic: "Operating Systems",
+        difficulty_b: 1.1,
+        difficulty_label: "Advanced (+1.1)",
+        discrimination_a: 1.6,
+        prerequisites: ["Mutexes and Semaphores"],
+        key_concepts: [
+          "All 4 Coffman conditions must hold simultaneously for deadlock: 1) Mutual Exclusion, 2) Hold and Wait, 3) No Preemption, 4) Circular Wait.",
+          "Differentiates Deadlock (permanent circular block where no process can proceed) vs Starvation (process waits indefinitely while others proceed).",
+          "Breaking any one Coffman condition prevents deadlocks from occurring."
+        ]
+      },
+      {
+        node_id: "bankers_algorithm",
+        name: "Banker's Algorithm & Deadlock Avoidance",
+        topic: "Operating Systems",
+        difficulty_b: 1.9,
+        difficulty_label: "Master (+1.9)",
+        discrimination_a: 1.8,
+        prerequisites: ["Coffman Conditions"],
+        key_concepts: [
+          "Dijkstra's deadlock avoidance algorithm for systems with multiple resource types.",
+          "Requires advance knowledge of maximum resource claims per process.",
+          "Maintains Available, Max, Allocation, and Need matrices (Need = Max - Allocation).",
+          "Safe State: System is safe if there exists a sequence <P1, P2, ... Pn> where each process can satisfy its Need using Available + currently held allocations."
+        ]
+      }
+    ];
+
+    function App() {
+      // Views: 'home' | 'revision' | 'interview' | 'results' | 'server_error'
+      const [currentView, setCurrentView] = useState("home");
+      const [finalResultsData, setFinalResultsData] = useState(null);
+      const [serverErrorMessage, setServerErrorMessage] = useState("");
+      
+      // Theme: 'dark' | 'light'
+      const [theme, setTheme] = useState(() => {
+        return localStorage.getItem("theme") || "dark";
+      });
+
+      // Apply theme to document
+      useEffect(() => {
+        const root = document.documentElement;
+        if (theme === "dark") {
+          root.classList.add("dark");
+        } else {
+          root.classList.remove("dark");
+        }
+        localStorage.setItem("theme", theme);
+      }, [theme]);
+
+      const toggleTheme = () => {
+        setTheme(prev => prev === "dark" ? "light" : "dark");
+      };
+
+      const handleInterviewComplete = (results) => {
+        setFinalResultsData(results);
+        setCurrentView("results");
+      };
+
+      const handleServerError = (errorMsg) => {
+        setServerErrorMessage(errorMsg || "The Python backend server is unreachable or failed during execution.");
+        setCurrentView("server_error");
+      };
+
+      return (
+        <div className={`min-h-screen ${theme === "dark" ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900"}`}>
+          {currentView === "home" && (
+            <HomePage 
+              onStartInterview={() => setCurrentView("interview")} 
+              onStartRevision={() => setCurrentView("revision")}
+              theme={theme}
+              toggleTheme={toggleTheme}
+            />
+          )}
+
+          {currentView === "revision" && (
+            <RevisionPage 
+              onBackHome={() => setCurrentView("home")}
+              onStartInterview={() => setCurrentView("interview")}
+              theme={theme}
+              toggleTheme={toggleTheme}
+            />
+          )}
+
+          {currentView === "interview" && (
+            <InterviewPage 
+              onBackHome={() => setCurrentView("home")}
+              onComplete={handleInterviewComplete}
+              onFail={handleServerError}
+              theme={theme}
+              toggleTheme={toggleTheme}
+            />
+          )}
+
+          {currentView === "results" && (
+            <ResultsPage
+              data={finalResultsData}
+              onBackHome={() => setCurrentView("home")}
+              onRetakeInterview={() => setCurrentView("interview")}
+              theme={theme}
+              toggleTheme={toggleTheme}
+            />
+          )}
+
+          {currentView === "server_error" && (
+            <ServerErrorPage
+              errorMessage={serverErrorMessage}
+              onBackHome={() => setCurrentView("home")}
+              onRetry={() => setCurrentView("interview")}
+              theme={theme}
+              toggleTheme={toggleTheme}
+            />
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 1. HOME PAGE
+    // =========================================================================
+    function HomePage({ onStartInterview, onStartRevision, theme, toggleTheme }) {
+      return (
+        <div className="min-h-screen flex flex-col justify-between">
+          {/* Top Navbar */}
+          <header className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex justify-between items-center backdrop-blur bg-white/70 dark:bg-slate-900/70 sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/25">
+                AI
+              </div>
+              <div>
+                <h1 className="font-bold text-base text-slate-900 dark:text-white leading-tight">Adaptive Interviewer</h1>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">IRT 2PL &bull; Knowledge Graph DAG</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                title="Toggle Light/Dark Theme"
+                className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              >
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
+            </div>
+          </header>
+
+          {/* Hero Section */}
+          <main className="flex-1 max-w-5xl mx-auto px-6 py-12 flex flex-col items-center text-center justify-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 mb-6">
+              <span>⚡</span> Next-Gen Psychometric Technical Interview Engine
+            </div>
+
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900 dark:text-white max-w-3xl leading-tight">
+              Master Technical Concepts With <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500">Adaptive Psychometrics</span>
+            </h2>
+
+            <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
+              Dynamically evaluates your engineering ability using 2-Parameter Logistic Item Response Theory (2PL-IRT), Bayesian updates, and prerequisite Knowledge Graph traversals.
+            </p>
+
+            {/* Two Action Cards: Revision vs Interview */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl mt-10 text-left">
+              {/* Revision Card */}
+              <div 
+                onClick={onStartRevision}
+                className="group relative cursor-pointer p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 hover:border-indigo-500 dark:hover:border-indigo-500 transition-all duration-200 shadow-sm hover:shadow-xl hover:-translate-y-1"
+              >
+                <div className="h-12 w-12 rounded-xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition">
+                  📖
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition flex items-center justify-between">
+                  Revision Mode
+                  <span className="text-base">&rarr;</span>
+                </h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                  Review Operating Systems core concepts, prerequisite dependency graphs, and ground-truth grading criteria before testing.
+                </p>
+                <div className="flex items-center gap-2 text-xs font-semibold text-purple-600 dark:text-purple-400">
+                  <span>6 Core OS Topics</span> &bull; <span>Prerequisite Mappings</span>
+                </div>
+              </div>
+
+              {/* Interview Card */}
+              <div 
+                onClick={onStartInterview}
+                className="group relative cursor-pointer p-6 rounded-2xl border-2 border-indigo-500 dark:border-indigo-500/80 bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/30 dark:from-indigo-950/40 dark:via-slate-900 dark:to-slate-900 hover:border-indigo-400 transition-all duration-200 shadow-md hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1"
+              >
+                <div className="h-12 w-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition shadow-lg shadow-indigo-600/30">
+                  🎙️
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition flex items-center justify-between">
+                  Live Adaptive Interview
+                  <span className="text-base">&rarr;</span>
+                </h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                  Engage in a real-time verbal or typed technical interview. Supports adaptive drill-downs (max 3 per topic) and live ability calibration.
+                </p>
+                <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                  <span>Voice STT Support</span> &bull; <span>Drill-Down Depth</span>
+                </div>
+              </div>
+            </div>
+          </main>
+
+          {/* Bottom Features Section */}
+          <footer className="border-t border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/60 py-10 px-6">
+            <div className="max-w-6xl mx-auto">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 text-center mb-8">
+                Key Architecture & Engine Features
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-indigo-500 dark:text-indigo-400 text-xl font-bold mb-1">2PL-IRT Calibration</div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    PyTorch Newton-Raphson MLE update calculates candidate latent ability (&theta;) in real time on a scale from -3.0 to +3.0.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-purple-500 dark:text-purple-400 text-xl font-bold mb-1">Fisher Information</div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Selects the next optimal question by maximizing Item Information (I_i(&theta;)), minimizing standard error in fewest turns.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-pink-500 dark:text-pink-400 text-xl font-bold mb-1">NetworkX DAG Traversal</div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Concept prerequisite checking guarantees foundational topics are mastered (&ge;50%) before unlocking advanced nodes.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-emerald-500 dark:text-emerald-400 text-xl font-bold mb-1">Adaptive Drill-Down</div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Probes depth up to 3 questions per topic for partial responses, and exits early if non-technical gibberish is detected.
+                  </p>
+                </div>
+              </div>
+              <div className="text-center text-xs text-slate-500 dark:text-slate-500 mt-8">
+                Operating Systems Concept Graph &bull; Adaptive Technical Interviewing System
+              </div>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 2. REVISION PAGE
+    // =========================================================================
+    function RevisionPage({ onBackHome, onStartInterview, theme, toggleTheme }) {
+      const [selectedTopic, setSelectedTopic] = useState(REVISION_TOPICS[0]);
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Header */}
+          <header className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex justify-between items-center bg-white dark:bg-slate-900 sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={onBackHome}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition"
+              >
+                <span>&larr;</span> Back to Home
+              </button>
+              <h1 className="font-bold text-base text-slate-900 dark:text-white">Operating Systems Revision Hub</h1>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs transition"
+              >
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
+              <button
+                onClick={onStartInterview}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition"
+              >
+                Start Interview &rarr;
+              </button>
+            </div>
+          </header>
+
+          {/* Content Area */}
+          <div className="flex-1 max-w-6xl w-full mx-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Topic List */}
+            <div className="space-y-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                Concept Nodes (DAG Sequence)
+              </h2>
+              {REVISION_TOPICS.map((topic, idx) => (
+                <div
+                  key={topic.node_id}
+                  onClick={() => setSelectedTopic(topic)}
+                  className={`p-4 rounded-xl border cursor-pointer transition ${
+                    selectedTopic.node_id === topic.node_id
+                      ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-sm"
+                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                      Step {idx + 1}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                      b = {topic.difficulty_b}
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">{topic.name}</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Prereqs: {topic.prerequisites.length > 0 ? topic.prerequisites.join(", ") : "None (Root)"}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            {/* Topic Details & Ground Truth Criteria */}
+            <div className="md:col-span-2 space-y-6">
+              <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
+                  <div>
+                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                      {selectedTopic.topic}
+                    </span>
+                    <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+                      {selectedTopic.name}
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      Difficulty: {selectedTopic.difficulty_label}
+                    </span>
+                    <span className="px-3 py-1 rounded-full text-xs font-semibold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      Discrimination a = {selectedTopic.discrimination_a}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Ground-Truth Grading Rubric & Key Points Tested
+                  </h4>
+                  <ul className="space-y-3">
+                    {selectedTopic.key_concepts.map((concept, i) => (
+                      <li key={i} className="flex items-start gap-3 text-sm text-slate-700 dark:text-slate-300">
+                        <span className="h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+                          ✓
+                        </span>
+                        <span>{concept}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    Node ID: {selectedTopic.node_id}
+                  </span>
+                  <button
+                    onClick={onStartInterview}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                  >
+                    Test This Concept in Interview &rarr;
+                  </button>
+                </div>
+              </div>
+
+              {/* Psychometrics Explainer Card */}
+              <div className="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs text-slate-600 dark:text-slate-400 space-y-2">
+                <div className="font-bold text-slate-800 dark:text-slate-200">How You Are Evaluated:</div>
+                <p>
+                  The Evaluator grades your conceptual understanding across 4 dimensions: Conceptual Accuracy (40%), Technical Depth (25%), Reasoning Ability (20%), and Clarity (15%). Full textbook wording is not mandatory—explaining the core ideas clearly in your own words earns solid credit. A composite score &ge; 50% satisfies prerequisites to progress across the concept graph.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 3. INTERVIEW PAGE
+    // =========================================================================
+    function InterviewPage({ onBackHome, onComplete, onFail, theme, toggleTheme }) {
+      const [socket, setSocket] = useState(null);
+      const [connected, setConnected] = useState(false);
+      const [messages, setMessages] = useState([]);
+      const [inputAnswer, setInputAnswer] = useState("");
+      const [isListening, setIsListening] = useState(false);
+      const [activeNode, setActiveNode] = useState("Waiting for server...");
+      const [activeNodeId, setActiveNodeId] = useState("");
+      const [evaluatedNodes, setEvaluatedNodes] = useState({});
+      const [theta, setTheta] = useState(0.0);
+      const [se, setSe] = useState(1.5);
+      const [showEndModal, setShowEndModal] = useState(false);
+
+      const recognitionRef = useRef(null);
+
+      // Connect to WebSocket
+      useEffect(() => {
+        let ws;
+        try {
+          ws = new WebSocket("ws://localhost:8000/ws/interview");
+          
+          ws.onopen = () => {
+            setConnected(true);
+            console.log("Connected to Interview WebSocket");
+          };
+
+          ws.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+
+              if (data.event === "INTERVIEW_INITIALIZED") {
+                setActiveNode(data.node_name);
+                setActiveNodeId(data.node_id || "");
+                setEvaluatedNodes(data.evaluated_nodes || {});
+                setTheta(data.theta);
+                setSe(data.se);
+                setMessages([{ sender: "ai", text: data.question, node: data.node_name }]);
+              } else if (data.event === "EVALUATION_AND_NEXT_QUESTION") {
+                setActiveNode(data.node_name);
+                setActiveNodeId(data.node_id || "");
+                setEvaluatedNodes(data.evaluated_nodes || {});
+                setTheta(data.updated_theta);
+                setSe(data.updated_se);
+                setMessages((prev) => [
+                  ...prev,
+                  { sender: "eval", eval: data.evaluation },
+                  { 
+                    sender: "ai", 
+                    text: data.question, 
+                    node: data.node_name, 
+                    is_drilldown: data.is_drilldown,
+                    topic_question_number: data.topic_question_number 
+                  }
+                ]);
+              } else if (data.event === "INTERVIEW_FINISHED") {
+                onComplete(data);
+              } else if (data.event === "ERROR") {
+                onFail(data.message);
+              }
+            } catch (err) {
+              console.error("Error parsing WS message:", err);
+              onFail("Error parsing message from backend server: " + err.message);
+            }
+          };
+
+          ws.onerror = (e) => {
+            console.warn("WebSocket connection error:", e);
+            setConnected(false);
+            onFail("Backend server connection failed. Please ensure 'python server.py' is running on port 8000.");
+          };
+
+          ws.onclose = (e) => {
+            setConnected(false);
+          };
+
+          setSocket(ws);
+        } catch (e) {
+          onFail("Failed to initialize WebSocket: " + e.message);
+        }
+
+        // Native Browser STT Setup
+        if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
+          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          recognitionRef.current = new SpeechRecognition();
+          recognitionRef.current.continuous = true;
+          recognitionRef.current.interimResults = true;
+
+          recognitionRef.current.onresult = (e) => {
+            let transcript = "";
+            for (let i = e.resultIndex; i < e.results.length; ++i) {
+              transcript += e.results[i][0].transcript;
+            }
+            setInputAnswer(transcript);
+          };
+        }
+
+        return () => {
+          if (ws) ws.close();
+        };
+      }, []);
+
+      const toggleMic = () => {
+        if (!recognitionRef.current) {
+          alert("Web Speech API not supported on this browser.");
+          return;
+        }
+        if (isListening) {
+          recognitionRef.current.stop();
+          setIsListening(false);
+        } else {
+          recognitionRef.current.start();
+          setIsListening(true);
+        }
+      };
+
+      const sendResponse = () => {
+        if (!inputAnswer.trim() || !socket || socket.readyState !== WebSocket.OPEN) return;
+        if (isListening) {
+          recognitionRef.current.stop();
+          setIsListening(false);
+        }
+
+        setMessages((prev) => [...prev, { sender: "user", text: inputAnswer }]);
+        socket.send(JSON.stringify({ event: "SUBMIT_ANSWER", text: inputAnswer }));
+        setInputAnswer("");
+      };
+
+      const handleEndInterviewEarly = () => {
+        if (socket) {
+          socket.close();
+        }
+        setShowEndModal(false);
+        onComplete({
+          final_theta: theta,
+          final_se: se,
+          mastery_summary: evaluatedNodes,
+          early_termination_reason: "Interview ended early by candidate request.",
+          history: []
+        });
+      };
+
+      return (
+        <div className="flex h-screen overflow-hidden">
+          {/* Main Interview Panel */}
+          <div className="flex-1 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={onBackHome}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center gap-1"
+                >
+                  <span>&larr;</span> Home
+                </button>
+                <div>
+                  <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">Live Technical Interview</h1>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">2PL-IRT Adaptive Calibration</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Connection Status */}
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                  <span className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}></span>
+                  <span className="text-xs font-mono text-slate-600 dark:text-slate-400">{connected ? "Connected" : "Disconnected"}</span>
+                </div>
+
+                {/* Theme Toggle */}
+                <button
+                  onClick={toggleTheme}
+                  title="Toggle Light/Dark Theme"
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs transition"
+                >
+                  {theme === "dark" ? "☀️" : "🌙"}
+                </button>
+
+                {/* End Interview Button */}
+                <button
+                  onClick={() => setShowEndModal(true)}
+                  className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition shadow-sm"
+                >
+                  End Interview
+                </button>
+              </div>
+            </div>
+
+            {/* Conversation Messages */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {messages.length === 0 && (
+                <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 dark:text-slate-500">
+                  <div className="text-4xl mb-3">🎙️</div>
+                  <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">Interview Session Ready</h3>
+                  <p className="text-xs max-w-sm mt-1">
+                    Generating diagnostic question based on the Operating Systems Knowledge Graph...
+                  </p>
+                </div>
+              )}
+
+              {messages.map((m, idx) => (
+                <div key={idx} className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}>
+                  {m.sender === "ai" && (
+                    <div className="max-w-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 p-4 rounded-2xl text-slate-800 dark:text-slate-200 shadow-sm">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <span>{m.is_drilldown ? "🔍" : "🤖"}</span> 
+                          {m.is_drilldown ? `Drill-Down (${m.topic_question_number}/3)` : "Interviewer"} &bull; {m.node}
+                        </span>
+                        {m.is_drilldown && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-mono">
+                            Probing Depth
+                          </span>
+                        )}
+                      </div>
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</p>
+                    </div>
+                  )}
+
+                  {m.sender === "user" && (
+                    <div className="max-w-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-2xl text-slate-900 dark:text-white shadow-sm">
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mb-1 font-semibold">Candidate Transcript</div>
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</p>
+                    </div>
+                  )}
+
+                  {m.sender === "eval" && (
+                    <div className="my-2 p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl text-xs w-full max-w-xl shadow-sm">
+                      <div className="flex justify-between font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+                        <span>G-Eval Score: {(m.eval.aggregate_score * 100).toFixed(1)}%</span>
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-[10px] uppercase">
+                          {m.eval.prerequisite_status}
+                        </span>
+                      </div>
+                      <div className="text-slate-600 dark:text-slate-400">
+                        Accuracy: {m.eval.conceptual_accuracy} | Depth: {m.eval.technical_depth} | Reasoning: {m.eval.reasoning_ability}
+                      </div>
+                      {m.eval.identified_misconceptions && m.eval.identified_misconceptions.length > 0 && (
+                        <div className="text-rose-600 dark:text-rose-400 mt-1.5 font-mono text-[11px] bg-rose-50 dark:bg-rose-950/30 p-2 rounded">
+                          Misconceptions: {m.eval.identified_misconceptions.join("; ")}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Input Bar */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3">
+              <button
+                onClick={toggleMic}
+                title="Toggle microphone"
+                className={`p-3 rounded-full transition ${
+                  isListening 
+                    ? "bg-rose-600 text-white animate-pulse shadow-lg shadow-rose-600/30" 
+                    : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                }`}
+              >
+                🎤
+              </button>
+              <textarea
+                rows="2"
+                className="flex-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-sm text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder={connected ? "Transcribe speech or type your technical answer..." : "Connecting to server..."}
+                value={inputAnswer}
+                onChange={(e) => setInputAnswer(e.target.value)}
+                disabled={!connected}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendResponse();
+                  }
+                }}
+              />
+              <button
+                onClick={sendResponse}
+                disabled={!inputAnswer.trim() || !connected}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition shadow-sm"
+              >
+                Submit Answer
+              </button>
+            </div>
+          </div>
+
+          {/* Right Psychometric & Graph Status Panel */}
+          <div className="w-80 bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between">
+            <div className="space-y-6">
+              <h2 className="text-xs uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
+                Psychometric Telemetry
+              </h2>
+              
+              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1 shadow-sm">
+                <div className="text-xs text-slate-500 dark:text-slate-400 font-semibold">Active Concept Node</div>
+                <div className="text-sm font-bold text-indigo-600 dark:text-indigo-400">{activeNode}</div>
+              </div>
+
+              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3 shadow-sm">
+                <div>
+                  <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400 mb-1 font-semibold">
+                    <span>Estimated Ability (&theta;)</span>
+                    <span className="font-mono text-slate-900 dark:text-white font-bold">{theta.toFixed(2)}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, Math.max(0, ((theta + 3) / 6) * 100))}%` }}
+                    ></div>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                    <span>-3.0 (Novice)</span>
+                    <span>0.0</span>
+                    <span>+3.0 (Master)</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between text-xs text-slate-600 dark:text-slate-400">
+                  <span>Standard Error SE(&theta;)</span>
+                  <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">{se.toFixed(3)}</span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400">Prerequisite Traversal</div>
+                  <span className="text-[10px] text-indigo-500 font-mono">Live DAG</span>
+                </div>
+                <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300">
+                  {REVISION_TOPICS.map((topic) => {
+                    const isEvaluated = topic.node_id in evaluatedNodes;
+                    const score = evaluatedNodes[topic.node_id];
+                    const isActive = (activeNodeId === topic.node_id) || (activeNode === topic.name);
+                    const isPassed = isEvaluated && score >= 0.50;
+                    const isFailed = isEvaluated && score < 0.50;
+
+                    let icon = <span className="text-slate-400">•</span>;
+                    let textClass = "text-slate-500 dark:text-slate-400";
+                    let badge = null;
+
+                    if (isActive) {
+                      icon = <span className="text-indigo-600 dark:text-indigo-400 font-bold animate-pulse">➜</span>;
+                      textClass = "text-indigo-600 dark:text-indigo-400 font-bold";
+                      badge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 font-mono">Active</span>;
+                    } else if (isPassed) {
+                      icon = <span className="text-emerald-500 font-bold">✓</span>;
+                      textClass = "text-emerald-700 dark:text-emerald-400 font-medium";
+                      badge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-300 font-mono">{Math.round(score * 100)}%</span>;
+                    } else if (isFailed) {
+                      icon = <span className="text-rose-500 font-bold">✗</span>;
+                      textClass = "text-rose-600 dark:text-rose-400";
+                      badge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-300 font-mono">{Math.round(score * 100)}%</span>;
+                    }
+
+                    return (
+                      <li key={topic.node_id} className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 truncate">
+                          {icon}
+                          <span className={`truncate ${textClass}`}>{topic.name}</span>
+                        </div>
+                        {badge}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-slate-400 dark:text-slate-500 border-t border-slate-200 dark:border-slate-800 pt-4">
+              IRT 2PL Formulation: P_i(&theta;) = (1 + e<sup>-a_i(&theta; - b_i)</sup>)<sup>-1</sup>
+            </div>
+          </div>
+
+          {/* End Interview Confirmation Modal */}
+          {showEndModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">End Interview Early?</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Ending the interview will finalize your session and generate your comprehensive topic mastery scorecard.
+                </p>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setShowEndModal(false)}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEndInterviewEarly}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition shadow"
+                  >
+                    Confirm & View Scorecard
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 4. RESULTS & SCORECARD PAGE (NEW)
+    // =========================================================================
+    function ResultsPage({ data, onBackHome, onRetakeInterview, theme, toggleTheme }) {
+      const summary = data?.mastery_summary || {};
+      const history = data?.history || [];
+      const theta = data?.final_theta !== undefined ? data.final_theta : 0.0;
+      const se = data?.final_se !== undefined ? data.final_se : 1.5;
+      const earlyReason = data?.early_termination_reason;
+
+      // Group history by topic_id
+      const topicHistoryMap = {};
+      history.forEach((h) => {
+        if (!topicHistoryMap[h.topic_id]) {
+          topicHistoryMap[h.topic_id] = [];
+        }
+        topicHistoryMap[h.topic_id].push(h);
+      });
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Header */}
+          <header className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex justify-between items-center bg-white dark:bg-slate-900 sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={onBackHome}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition"
+              >
+                <span>&larr;</span> Back to Home
+              </button>
+              <h1 className="font-bold text-base text-slate-900 dark:text-white">Interview Assessment Report</h1>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs transition"
+              >
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
+              <button
+                onClick={onRetakeInterview}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition"
+              >
+                Retake Interview &rarr;
+              </button>
+            </div>
+          </header>
+
+          {/* Main Body */}
+          <main className="flex-1 max-w-5xl w-full mx-auto p-6 space-y-8">
+            {/* Top Score Banner */}
+            <div className="p-8 rounded-3xl border border-indigo-200 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-slate-900 dark:via-indigo-950/30 dark:to-slate-900 shadow-xl">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 mb-3">
+                    <span>{earlyReason ? "⚠️ Early Cutoff" : "🎯 Evaluation Complete"}</span>
+                  </div>
+                  <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white">
+                    {earlyReason ? "Assessment Concluded" : "Psychometric Assessment Scorecard"}
+                  </h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-xl">
+                    {earlyReason || "Your technical responses were calibrated against 2PL-IRT parameters and evaluated against OS ground-truth criteria."}
+                  </p>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center shadow-sm min-w-[200px]">
+                  <div className="text-xs uppercase font-bold text-slate-400 tracking-wider">Latent Ability (&theta;)</div>
+                  <div className="text-4xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400 my-1">
+                    {theta > 0 ? `+${theta}` : theta}
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono">SE(&theta;): {se}</div>
+                  <div className="text-[10px] text-slate-400 mt-2">Scale: -3.0 (Novice) to +3.0 (Master)</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Topic Mastery Grid */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Topic Mastery & Evaluation Summary</h3>
+                <span className="text-xs text-slate-500">Prerequisite threshold: &ge;50%</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {REVISION_TOPICS.map((topic) => {
+                  const hasTested = topic.node_id in summary;
+                  const score = summary[topic.node_id];
+                  const isPassed = hasTested && score >= 0.50;
+                  const topicTurns = topicHistoryMap[topic.node_id] || [];
+
+                  return (
+                    <div
+                      key={topic.node_id}
+                      className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-[10px] font-mono uppercase text-indigo-600 dark:text-indigo-400 font-bold">
+                            Difficulty b = {topic.difficulty_b}
+                          </span>
+                          <h4 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">{topic.name}</h4>
+                        </div>
+                        {hasTested ? (
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                            isPassed 
+                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
+                              : "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
+                          }`}>
+                            {Math.round(score * 100)}% {isPassed ? "✓ Passed" : "✗ Needs Review"}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500">
+                            Not Tested
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Important Ground-Truth Key Points */}
+                      <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl space-y-1.5 border border-slate-100 dark:border-slate-800">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                          Key Technical Points Required:
+                        </div>
+                        <ul className="text-xs space-y-1 text-slate-600 dark:text-slate-400">
+                          {topic.key_concepts.map((pt, i) => (
+                            <li key={i} className="flex items-start gap-1.5">
+                              <span className="text-indigo-500 mt-0.5">&bull;</span>
+                              <span>{pt}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      {/* Turn details if tested */}
+                      {topicTurns.length > 0 && (
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 flex justify-between">
+                          <span>Questions Asked: {topicTurns.length} (Max 3)</span>
+                          {topicTurns[topicTurns.length - 1].evaluation?.identified_misconceptions?.length > 0 && (
+                            <span className="text-rose-500 font-medium">
+                              Misconceptions Flagged
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Detailed Q&A Review Log (if available) */}
+            {history.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Detailed Response & Feedback Log</h3>
+                <div className="space-y-4">
+                  {history.map((turn, i) => (
+                    <div key={i} className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                          Q{i + 1}: {turn.topic_name} {turn.is_drilldown ? `(Drill-Down #${turn.drilldown_turn})` : ""}
+                        </span>
+                        <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          Score: {Math.round(turn.evaluation.aggregate_score * 100)}% ({turn.evaluation.prerequisite_status})
+                        </span>
+                      </div>
+                      
+                      {turn.question && (
+                        <div className="text-sm font-medium text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-xs text-slate-400 block mb-0.5">Question Asked:</span>
+                          {turn.question}
+                        </div>
+                      )}
+
+                      <div className="text-sm text-slate-700 dark:text-slate-300 p-3 rounded-xl bg-slate-100 dark:bg-slate-800">
+                        <span className="text-xs text-slate-500 dark:text-slate-400 block mb-0.5">Your Response:</span>
+                        {turn.answer}
+                      </div>
+
+                      {turn.evaluation?.identified_misconceptions?.length > 0 && (
+                        <div className="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 p-3 rounded-xl border border-rose-200 dark:border-rose-900/50">
+                          <strong>Identified Gaps / Misconceptions:</strong> {turn.evaluation.identified_misconceptions.join("; ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Actions */}
+            <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex justify-center gap-4">
+              <button
+                onClick={onBackHome}
+                className="px-6 py-3 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-sm rounded-xl transition"
+              >
+                Return to Home Page
+              </button>
+              <button
+                onClick={onRetakeInterview}
+                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-indigo-600/30"
+              >
+                Take Interview Again
+              </button>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 5. SERVER / CODE ERROR PAGE (NEW)
+    // =========================================================================
+    function ServerErrorPage({ errorMessage, onBackHome, onRetry, theme, toggleTheme }) {
+      return (
+        <div className="min-h-screen flex flex-col justify-between">
+          {/* Header */}
+          <header className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex justify-between items-center bg-white dark:bg-slate-900 sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={onBackHome}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition"
+              >
+                <span>&larr;</span> Back to Home
+              </button>
+              <h1 className="font-bold text-base text-rose-600 dark:text-rose-400">Server Issue Encountered</h1>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs transition"
+              >
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
+            </div>
+          </header>
+
+          {/* Error Details */}
+          <main className="flex-1 max-w-2xl mx-auto px-6 py-16 flex flex-col items-center text-center justify-center">
+            <div className="h-16 w-16 rounded-2xl bg-rose-100 dark:bg-rose-950/70 text-rose-600 dark:text-rose-400 flex items-center justify-center text-3xl mb-6 shadow-lg shadow-rose-600/20">
+              ⚠️
+            </div>
+
+            <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white">
+              Server Connection Issue
+            </h2>
+
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400 leading-relaxed max-w-md">
+              The application could not reach the backend interview server or an error occurred during execution.
+            </p>
+
+            <div className="w-full mt-6 p-4 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-left font-mono text-xs text-rose-600 dark:text-rose-400 whitespace-pre-wrap break-all">
+              {errorMessage}
+            </div>
+
+            <div className="w-full mt-6 p-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 text-left text-xs text-slate-700 dark:text-slate-300 space-y-1.5">
+              <div className="font-bold text-indigo-700 dark:text-indigo-400">How to Resolve:</div>
+              <div>1. Double check that <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded">run_server.bat</code> is open and running.</div>
+              <div>2. Verify the server is listening on port <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded">8000</code>.</div>
+              <div>3. Check your API key in <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded">.env</code>.</div>
+            </div>
+
+            <div className="mt-8 flex gap-4">
+              <button
+                onClick={onBackHome}
+                className="px-6 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs hover:bg-slate-100 dark:hover:bg-slate-700 transition"
+              >
+                &larr; Return to Home
+              </button>
+              <button
+                onClick={onRetry}
+                className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition shadow-md shadow-indigo-600/30"
+              >
+                Retry Connection
+              </button>
+            </div>
+          </main>
+
+          <footer className="py-6 border-t border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+            Adaptive Technical Interviewer &bull; Error Recovery System
+          </footer>
+        </div>
+      );
+    }
+
+    const container = document.getElementById("root");
+    const root = ReactDOM.createRoot(container);
+    root.render(<App />);
+  </script>
+</body>
+</html>

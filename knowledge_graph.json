@@ -1,0 +1,80 @@
+[
+  {
+    "node_id": "process_vs_thread",
+    "name": "Process vs Thread Architecture",
+    "topic": "Operating Systems",
+    "difficulty_b": -1.2,
+    "discrimination_a": 1.2,
+    "prerequisites": [],
+    "ground_truth_criteria": [
+      "Process has independent address space; threads share process address space, heap, and open files",
+      "Each thread maintains its own program counter, stack, and registers",
+      "Context switching overhead is substantially higher for processes than threads"
+    ]
+  },
+  {
+    "node_id": "cpu_scheduling_basics",
+    "name": "CPU Scheduling Fundamentals",
+    "topic": "Operating Systems",
+    "difficulty_b": -0.8,
+    "discrimination_a": 1.1,
+    "prerequisites": ["process_vs_thread"],
+    "ground_truth_criteria": [
+      "Distinguishes preemptive vs non-preemptive scheduling algorithms",
+      "Explains FCFS convoy effect and Round-Robin time quantum trade-offs",
+      "Defines turnaround time, waiting time, and response time correctly"
+    ]
+  },
+  {
+    "node_id": "race_conditions",
+    "name": "Race Conditions & Critical Sections",
+    "topic": "Operating Systems",
+    "difficulty_b": 0.0,
+    "discrimination_a": 1.4,
+    "prerequisites": ["process_vs_thread"],
+    "ground_truth_criteria": [
+      "Defines race condition as concurrent uncoordinated access to shared memory",
+      "States the three critical section requirements: Mutual Exclusion, Progress, Bounded Waiting",
+      "Explains atomic operations like Test-and-Set or Compare-and-Swap"
+    ]
+  },
+  {
+    "node_id": "synchronization_primitives",
+    "name": "Mutexes and Semaphores",
+    "topic": "Operating Systems",
+    "difficulty_b": 0.5,
+    "discrimination_a": 1.5,
+    "prerequisites": ["race_conditions"],
+    "ground_truth_criteria": [
+      "Mutex has an ownership concept; counting/binary semaphores are signaling mechanisms",
+      "Explains atomic wait()/P() decrement and signal()/V() increment operations",
+      "Identifies priority inversion risks and priority inheritance solutions"
+    ]
+  },
+  {
+    "node_id": "deadlock_characterization",
+    "name": "Deadlock Characterization & Coffman Conditions",
+    "topic": "Operating Systems",
+    "difficulty_b": 1.1,
+    "discrimination_a": 1.6,
+    "prerequisites": ["synchronization_primitives"],
+    "ground_truth_criteria": [
+      "Explicitly names all four Coffman conditions: Mutual Exclusion, Hold and Wait, No Preemption, Circular Wait",
+      "Explains that all four conditions must hold simultaneously for a deadlock to occur",
+      "Differentiates between resource deadlock and starvation"
+    ]
+  },
+  {
+    "node_id": "bankers_algorithm",
+    "name": "Banker's Algorithm & Deadlock Avoidance",
+    "topic": "Operating Systems",
+    "difficulty_b": 1.9,
+    "discrimination_a": 1.8,
+    "prerequisites": ["deadlock_characterization"],
+    "ground_truth_criteria": [
+      "Requires advance knowledge of maximum resource allocation requests per process",
+      "Maintains Available, Max, Allocation, and Need matrices (Need = Max - Allocation)",
+      "Defines a safe state where a safe execution sequence of all processes exists"
+    ]
+  }
+]
